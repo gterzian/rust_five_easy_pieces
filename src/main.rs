@@ -15,63 +15,47 @@ fn first() {
     /// to the other component running in parallel.
     enum WorkMsg {
         Work(u8),
-        Exit,
     }
 
     /// The messages sent from the "parallel" component,
     /// back to the "main component".
     enum ResultMsg {
         Result(u8),
-        Exited,
     }
 
     let (work_sender, work_receiver) = unbounded();
     let (result_sender, result_receiver) = unbounded();
 
     // Spawn another component in parallel.
-    let _ = thread::spawn(move || loop {
+    let worker = thread::spawn(move || {
         // Receive, and handle, messages,
         // until told to exit.
-        match work_receiver.recv() {
-            Ok(WorkMsg::Work(num)) => {
-                // Perform some "work", sending back the result.
-                let _ = result_sender.send(ResultMsg::Result(num));
-            }
-            Ok(WorkMsg::Exit) => {
-                // Send a confirmation of exit.
-                let _ = result_sender.send(ResultMsg::Exited);
-                break;
-            }
-            _ => panic!("Error receiving a WorkMsg."),
+        for WorkMsg::Work(num) in work_receiver {
+            // Perform some "work", sending back the result.
+            result_sender.send(ResultMsg::Result(num)).unwrap();
         }
     });
 
     // Send two pieces of "work",
     // followed by a request to exit.
-    let _ = work_sender.send(WorkMsg::Work(0));
-    let _ = work_sender.send(WorkMsg::Work(1));
-    let _ = work_sender.send(WorkMsg::Exit);
+    work_sender.send(WorkMsg::Work(0)).unwrap();
+    work_sender.send(WorkMsg::Work(1)).unwrap();
+    drop(work_sender);
 
     // A counter of work performed.
     let mut counter = 0;
 
-    loop {
-        match result_receiver.recv() {
-            Ok(ResultMsg::Result(num)) => {
-                // Assert that we're receiving results
-                // in the same order that the requests were sent.
-                assert_eq!(num, counter);
-                counter += 1;
-            }
-            Ok(ResultMsg::Exited) => {
-                // Assert that we're exiting
-                // after having received two work results.
-                assert_eq!(2, counter);
-                break;
-            }
-            _ => panic!("Error receiving a ResultMsg."),
-        }
+    for ResultMsg::Result(num) in result_receiver {
+        // Assert that we're receiving results
+        // in the same order that the requests were sent.
+        assert_eq!(num, counter);
+        counter += 1;
     }
+    // Assert that we're exiting
+    // after having received two work results.
+    assert_eq!(2, counter);
+    // Manual join is also an anti-pattern, better to use something like jod_tread.
+    worker.join().unwrap()
 }
 
 #[test]
